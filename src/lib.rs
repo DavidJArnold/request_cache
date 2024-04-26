@@ -1,3 +1,4 @@
+use reqwest::header::{HeaderMap, USER_AGENT};
 use sqlite::{Connection, State};
 
 #[derive(Debug)]
@@ -22,14 +23,15 @@ pub fn request(
     method: String,
     timeout: i64,
     force_refresh: Option<bool>,
+    user_agent: Option<&str>,
 ) -> Record {
     if force_refresh.unwrap_or(false) {
-        return make_request(&connection, &url, &method, timeout);
+        return make_request(connection, &url, &method, timeout, user_agent);
     }
     // make a request, using cached response if one exists
-    match get_record(&connection, &url, &method) {
+    match get_record(connection, &url, &method) {
         Some(x) => x,
-        _ => make_request(&connection, &url, &method, timeout),
+        _ => make_request(connection, &url, &method, timeout, user_agent),
     }
 }
 
@@ -65,9 +67,27 @@ fn insert_record(connection: &Connection, record: &Record) -> Result<(), sqlite:
     connection.execute(query)
 }
 
-fn make_request(connection: &Connection, url: &str, method: &str, timeout: i64) -> Record {
+fn make_request(
+    connection: &Connection,
+    url: &str,
+    method: &str,
+    timeout: i64,
+    user_agent: Option<&str>,
+) -> Record {
     // make an HTTP request and create a Record
-    let response = reqwest::blocking::get(url).unwrap().text().unwrap();
+    let client = reqwest::blocking::Client::new();
+    let mut headers = HeaderMap::new();
+    if let Some(user_agent) = user_agent {
+        headers.insert(USER_AGENT, user_agent.parse().unwrap());
+    }
+
+    let response = client
+        .get(url)
+        .headers(headers)
+        .send()
+        .unwrap()
+        .text()
+        .unwrap();
 
     // expires timeout seconds after now
     let expiry_timestamp = std::time::SystemTime::now()
@@ -83,7 +103,7 @@ fn make_request(connection: &Connection, url: &str, method: &str, timeout: i64) 
         cached: Some(false),
     };
     // add to the cache
-    let _ = insert_record(&connection, &record).unwrap();
+    insert_record(connection, &record).unwrap();
 
     record
 }
@@ -120,6 +140,7 @@ mod tests {
             "GET".to_string(),
             10000,
             Some(false),
+            None,
         );
         assert!(resp.cached == Some(false));
         let query = "SELECT * FROM requests";
@@ -130,7 +151,8 @@ mod tests {
             "http://example.com".to_string(),
             "GET".to_string(),
             10000,
-            Some(false),
+            None,
+            None,
         );
         assert!(resp.cached == Some(true));
         let query = "SELECT * FROM requests";
@@ -142,6 +164,7 @@ mod tests {
             "GET".to_string(),
             10000,
             Some(true),
+            Some("dummy"),
         );
         assert!(resp.cached == Some(false));
     }
@@ -156,6 +179,7 @@ mod tests {
             "GET".to_string(),
             5,
             Some(false),
+            Some("dummy"),
         );
         assert!(resp.cached == Some(false));
         let query = "SELECT * FROM requests";
@@ -167,6 +191,7 @@ mod tests {
             "GET".to_string(),
             5,
             Some(false),
+            None,
         );
         assert!(resp.cached == Some(true));
         let query = "SELECT * FROM requests";
@@ -179,6 +204,7 @@ mod tests {
             "GET".to_string(),
             5,
             Some(false),
+            None,
         );
         assert!(resp.cached == Some(false));
         let query = "SELECT * FROM requests";
