@@ -2,11 +2,11 @@ use sqlite::{Connection, State};
 
 #[derive(Debug)]
 pub struct Record {
-    request: String,
-    method: String,
-    response: String,
-    expires: i64,
-    cached: Option<bool>,
+    pub request: String,
+    pub method: String,
+    pub response: String,
+    pub expires: i64,
+    pub cached: Option<bool>,
 }
 
 pub fn create_connection(path: &str) -> Connection {
