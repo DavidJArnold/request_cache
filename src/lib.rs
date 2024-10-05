@@ -1,5 +1,5 @@
 use reqwest::header::{HeaderMap, USER_AGENT};
-use sqlite::{Connection, State};
+use async_sqlite::{Error, Client, ClientBuilder};
 
 #[derive(Debug)]
 pub struct Record {
@@ -10,15 +10,19 @@ pub struct Record {
     pub cached: Option<bool>,
 }
 
-pub fn create_connection(path: &str) -> Connection {
+pub async fn create_connection(path: &str) -> Client {
     // Return a connection for the database located at /path
-    let conn = Connection::open(path).unwrap();
-    let _ = conn.execute("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);");
-    conn
+    let client = ClientBuilder::new()
+                .path(path)
+                .open()
+                .await
+                .unwrap();
+    let _ = client.conn(|conn| conn.execute_batch("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);"));
+    client
 }
 
 pub async fn request(
-    connection: &Connection,
+    connection: &Client,
     url: String,
     method: String,
     timeout: i64,
@@ -29,46 +33,41 @@ pub async fn request(
         return make_request(connection, &url, &method, timeout, user_agent).await;
     }
     // make a request, using cached response if one exists
-    match get_record(connection, &url, &method) {
+    match get_record(connection, &url, &method).await {
         Some(x) => x,
         _ => make_request(connection, &url, &method, timeout, user_agent).await,
     }
 }
 
-fn get_record(connection: &Connection, url: &str, method: &str) -> Option<Record> {
+async fn get_record(connection: &Client, url: &str, method: &str) -> Option<Record> {
     // try to get a record from the DB
     let query = format!("SELECT * FROM requests WHERE request = '{}' AND method = '{}' AND expires > {} ORDER BY expires DESC LIMIT 1;", url, method, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64);
-    let mut result = connection.prepare(query).unwrap();
-    match result.next() {
-        Err(_) => None,
-        Ok(State::Done) => None,
-        Ok(_) => Some(Record {
-            method: result.read::<String, _>("method").unwrap(),
-            request: result.read::<String, _>("request").unwrap(),
-            response: result.read::<String, _>("response").unwrap(),
-            expires: result.read::<i64, _>("expires").unwrap(),
-            cached: Some(true),
-        }),
-    }
+    connection.conn(move |conn| conn.query_row(&query, [], |row| Ok(Record {
+        method: row.get(0)?,
+        request: row.get(1)?,
+        response: row.get(2)?,
+        expires: row.get(3)?,
+        cached: Some(true),
+    }))).await.ok()
 }
 
-fn insert_record(connection: &Connection, record: &Record) -> Result<(), sqlite::Error> {
+async fn insert_record(connection: &Client, record: &Record) -> Result<(), Error> {
     // remove other records for this url/method
     let query = format!(
         "DELETE FROM requests WHERE request = '{}' AND method = '{}';",
         record.request, record.method
     );
-    let _ = connection.execute(query);
+    let _ = connection.conn(move |conn| conn.execute_batch(&query));
     // then insert the new record
     let query = format!(
         "INSERT INTO requests VALUES ('{}', '{}', '{}', {});",
         record.request, record.method, record.response, record.expires
     );
-    connection.execute(query)
+    connection.conn(move |conn| conn.execute_batch(&query)).await
 }
 
 async fn make_request(
-    connection: &Connection,
+    connection: &Client,
     url: &str,
     method: &str,
     timeout: i64,
@@ -105,7 +104,7 @@ async fn make_request(
         cached: Some(false),
     };
     // add to the cache
-    insert_record(connection, &record).unwrap();
+    insert_record(connection, &record).await.unwrap();
 
     record
 }
@@ -135,9 +134,9 @@ mod tests {
     #[tokio::test]
     async fn test_cache_request() {
         let clean = TestCleanup { path: &"test_1" };
-        let conn = create_connection(clean.path);
+        let db_client = create_connection(clean.path).await;
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
             10000,
@@ -146,10 +145,16 @@ mod tests {
         ).await;
         assert!(resp.cached == Some(false));
         let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(statement.iter().count() == 1);
+        let res = db_client.conn(|conn| conn.prepare(&query)?.query_map([], |row| { Ok(Record {
+            method: row.get(0).unwrap(),
+            request: row.get(1).unwrap(),
+            response: row.get(2).unwrap(),
+            expires: row.get(3).unwrap(),
+            cached: Some(true),
+        })})).await.unwrap();
+        assert!(res.count() == 1);
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
             10000,
@@ -161,7 +166,7 @@ mod tests {
         let mut statement = conn.prepare(query).unwrap();
         assert!(statement.iter().count() == 1);
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
             10000,
