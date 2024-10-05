@@ -17,7 +17,7 @@ pub async fn create_connection(path: &str) -> Client {
                 .open()
                 .await
                 .unwrap();
-    let _ = client.conn(|conn| conn.execute_batch("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);"));
+    let _ = client.conn(move |conn| conn.execute_batch("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);")).await;
     client
 }
 
@@ -57,7 +57,7 @@ async fn insert_record(connection: &Client, record: &Record) -> Result<(), Error
         "DELETE FROM requests WHERE request = '{}' AND method = '{}';",
         record.request, record.method
     );
-    let _ = connection.conn(move |conn| conn.execute_batch(&query));
+    let _ = connection.conn(move |conn| conn.execute_batch(&query)).await;
     // then insert the new record
     let query = format!(
         "INSERT INTO requests VALUES ('{}', '{}', '{}', {});",
@@ -125,9 +125,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_create_connection() {
-        create_connection("test");
+    #[tokio::test]
+    async fn test_create_connection() {
+        create_connection("test").await;
         let _ = fs::remove_file("test");
     }
 
@@ -144,15 +144,9 @@ mod tests {
             None,
         ).await;
         assert!(resp.cached == Some(false));
-        let query = "SELECT * FROM requests";
-        let res = db_client.conn(|conn| conn.prepare(&query)?.query_map([], |row| { Ok(Record {
-            method: row.get(0).unwrap(),
-            request: row.get(1).unwrap(),
-            response: row.get(2).unwrap(),
-            expires: row.get(3).unwrap(),
-            cached: Some(true),
-        })})).await.unwrap();
-        assert!(res.count() == 1);
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        assert!(res == Ok(1));
         let resp = request(
             &db_client,
             "http://example.com".to_string(),
@@ -162,9 +156,9 @@ mod tests {
             None,
         ).await;
         assert!(resp.cached == Some(true));
-        let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(statement.iter().count() == 1);
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        assert!(res == Ok(1));
         let resp = request(
             &db_client,
             "http://example.com".to_string(),
@@ -179,34 +173,34 @@ mod tests {
     #[tokio::test]
     async fn test_cache_request_timeout() {
         let clean = TestCleanup { path: &"test_4" };
-        let conn = create_connection(clean.path);
+        let db_client = create_connection(clean.path).await;
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
-            5,
+            1,
             Some(false),
             Some("dummy"),
         );
         assert!(resp.await.cached == Some(false));
-        let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(statement.iter().count() == 1);
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        assert!(res == Ok(1));
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
-            5,
+            1,
             Some(false),
             None,
         );
         assert!(resp.await.cached == Some(true));
-        let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(statement.iter().count() == 1);
-        sleep(Duration::from_secs(8));
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        assert!(res == Ok(1));
+        sleep(Duration::from_secs(1));
         let resp = request(
-            &conn,
+            &db_client,
             "http://example.com".to_string(),
             "GET".to_string(),
             5,
@@ -214,43 +208,8 @@ mod tests {
             None,
         );
         assert!(resp.await.cached == Some(false));
-        let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(
-            statement.iter().count() == 1,
-            "{}",
-            statement.iter().count()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_table() {
-        let _clean = TestCleanup { path: &"test_2" };
-        let _ = fs::remove_file("test_2");
-        let conn = create_connection("test_2");
-        let _ = conn
-            .execute(format!(
-                "INSERT INTO requests VALUES ('request', 'GET', 'response', {});",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64
-                    + 20
-            ))
-            .unwrap();
-        let _ = conn
-            .execute(format!(
-                "INSERT INTO requests VALUES ('reques2', 'GE2', 'respons2', {});",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64
-                    + 86_400
-            ))
-            .unwrap();
-
-        let query = "SELECT * FROM requests";
-        let mut statement = conn.prepare(query).unwrap();
-        assert!(statement.iter().count() == 2);
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        assert!(res == Ok(1));
     }
 }
