@@ -17,7 +17,7 @@ pub fn create_connection(path: &str) -> Connection {
     conn
 }
 
-pub fn request(
+pub async fn request(
     connection: &Connection,
     url: String,
     method: String,
@@ -26,12 +26,12 @@ pub fn request(
     user_agent: Option<&str>,
 ) -> Record {
     if force_refresh.unwrap_or(false) {
-        return make_request(connection, &url, &method, timeout, user_agent);
+        return make_request(connection, &url, &method, timeout, user_agent).await;
     }
     // make a request, using cached response if one exists
     match get_record(connection, &url, &method) {
         Some(x) => x,
-        _ => make_request(connection, &url, &method, timeout, user_agent),
+        _ => make_request(connection, &url, &method, timeout, user_agent).await,
     }
 }
 
@@ -67,7 +67,7 @@ fn insert_record(connection: &Connection, record: &Record) -> Result<(), sqlite:
     connection.execute(query)
 }
 
-fn make_request(
+async fn make_request(
     connection: &Connection,
     url: &str,
     method: &str,
@@ -75,7 +75,7 @@ fn make_request(
     user_agent: Option<&str>,
 ) -> Record {
     // make an HTTP request and create a Record
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     if let Some(user_agent) = user_agent {
         headers.insert(USER_AGENT, user_agent.parse().unwrap());
@@ -85,8 +85,10 @@ fn make_request(
         .get(url)
         .headers(headers)
         .send()
+        .await
         .unwrap()
         .text()
+        .await
         .unwrap();
 
     // expires timeout seconds after now
@@ -130,8 +132,8 @@ mod tests {
         let _ = fs::remove_file("test");
     }
 
-    #[test]
-    fn test_cache_request() {
+    #[tokio::test]
+    async fn test_cache_request() {
         let clean = TestCleanup { path: &"test_1" };
         let conn = create_connection(clean.path);
         let resp = request(
@@ -141,7 +143,7 @@ mod tests {
             10000,
             Some(false),
             None,
-        );
+        ).await;
         assert!(resp.cached == Some(false));
         let query = "SELECT * FROM requests";
         let mut statement = conn.prepare(query).unwrap();
@@ -153,7 +155,7 @@ mod tests {
             10000,
             None,
             None,
-        );
+        ).await;
         assert!(resp.cached == Some(true));
         let query = "SELECT * FROM requests";
         let mut statement = conn.prepare(query).unwrap();
@@ -165,12 +167,12 @@ mod tests {
             10000,
             Some(true),
             Some("dummy"),
-        );
+        ).await;
         assert!(resp.cached == Some(false));
     }
 
-    #[test]
-    fn test_cache_request_timeout() {
+    #[tokio::test]
+    async fn test_cache_request_timeout() {
         let clean = TestCleanup { path: &"test_4" };
         let conn = create_connection(clean.path);
         let resp = request(
@@ -181,7 +183,7 @@ mod tests {
             Some(false),
             Some("dummy"),
         );
-        assert!(resp.cached == Some(false));
+        assert!(resp.await.cached == Some(false));
         let query = "SELECT * FROM requests";
         let mut statement = conn.prepare(query).unwrap();
         assert!(statement.iter().count() == 1);
@@ -193,7 +195,7 @@ mod tests {
             Some(false),
             None,
         );
-        assert!(resp.cached == Some(true));
+        assert!(resp.await.cached == Some(true));
         let query = "SELECT * FROM requests";
         let mut statement = conn.prepare(query).unwrap();
         assert!(statement.iter().count() == 1);
@@ -206,7 +208,7 @@ mod tests {
             Some(false),
             None,
         );
-        assert!(resp.cached == Some(false));
+        assert!(resp.await.cached == Some(false));
         let query = "SELECT * FROM requests";
         let mut statement = conn.prepare(query).unwrap();
         assert!(
@@ -216,8 +218,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_create_table() {
+    #[tokio::test]
+    async fn test_create_table() {
         let _clean = TestCleanup { path: &"test_2" };
         let _ = fs::remove_file("test_2");
         let conn = create_connection("test_2");
