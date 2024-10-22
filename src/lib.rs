@@ -27,7 +27,7 @@ pub async fn request(
     method: String,
     timeout: i64,
     force_refresh: Option<bool>,
-    user_agent: Option<&str>,
+    user_agent: Option<String>,
 ) -> Record {
     if force_refresh.unwrap_or(false) {
         return make_request(connection, &url, &method, timeout, user_agent).await;
@@ -71,7 +71,7 @@ async fn make_request(
     url: &str,
     method: &str,
     timeout: i64,
-    user_agent: Option<&str>,
+    user_agent: Option<String>,
 ) -> Record {
     // make an HTTP request and create a Record
     let client = reqwest::Client::new();
@@ -165,7 +165,7 @@ mod tests {
             "GET".to_string(),
             10000,
             Some(true),
-            Some("dummy"),
+            Some("dummy".to_string()),
         ).await;
         assert!(resp.cached == Some(false));
     }
@@ -180,7 +180,7 @@ mod tests {
             "GET".to_string(),
             1,
             Some(false),
-            Some("dummy"),
+            Some("dummy".to_string()),
         );
         assert!(resp.await.cached == Some(false));
         let query = "SELECT COUNT(*) FROM requests";
