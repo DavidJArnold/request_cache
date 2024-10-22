@@ -10,7 +10,7 @@ pub struct Record {
     pub cached: Option<bool>,
 }
 
-pub async fn create_connection(path: &str) -> Client {
+pub async fn create_connection(path: String) -> Client {
     // Return a connection for the database located at /path
     let client = ClientBuilder::new()
                 .path(path)
@@ -115,26 +115,26 @@ mod tests {
 
     use super::*;
 
-    struct TestCleanup<'a> {
-        path: &'a str,
+    struct TestCleanup {
+        path: String,
     }
 
-    impl<'a> Drop for TestCleanup<'a> {
+    impl Drop for TestCleanup {
         fn drop(&mut self) {
-            let _ = fs::remove_file(self.path);
+            let _ = fs::remove_file(&self.path);
         }
     }
 
     #[tokio::test]
     async fn test_create_connection() {
-        create_connection("test").await;
-        let _ = fs::remove_file("test");
+        create_connection("test".to_string()).await;
+        let _ = fs::remove_file(&"test");
     }
 
     #[tokio::test]
     async fn test_cache_request() {
-        let clean = TestCleanup { path: &"test_1" };
-        let db_client = create_connection(clean.path).await;
+        let clean = TestCleanup { path: "test_1".to_string() };
+        let db_client = create_connection(clean.path.clone()).await;
         let resp = request(
             &db_client,
             "http://example.com".to_string(),
@@ -172,8 +172,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_request_timeout() {
-        let clean = TestCleanup { path: &"test_4" };
-        let db_client = create_connection(clean.path).await;
+        let clean = TestCleanup { path: "test_4".to_string() };
+        let db_client = create_connection(clean.path.clone()).await;
         let resp = request(
             &db_client,
             "http://example.com".to_string(),
