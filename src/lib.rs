@@ -1,7 +1,7 @@
+use async_sqlite::{rusqlite::params, Client, ClientBuilder, Error};
 use reqwest::header::{HeaderMap, USER_AGENT};
-use async_sqlite::{Error, Client, ClientBuilder};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Record {
     pub request: String,
     pub method: String,
@@ -12,11 +12,7 @@ pub struct Record {
 
 pub async fn create_connection(path: String) -> Client {
     // Return a connection for the database located at /path
-    let client = ClientBuilder::new()
-                .path(path)
-                .open()
-                .await
-                .unwrap();
+    let client = ClientBuilder::new().path(path).open().await.unwrap();
     let _ = client.conn(move |conn| conn.execute_batch("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);")).await;
     client
 }
@@ -33,37 +29,58 @@ pub async fn request(
         return make_request(connection, &url, &method, timeout, user_agent).await;
     }
     // make a request, using cached response if one exists
-    match get_record(connection, &url, &method).await {
+    match get_record(connection, url.clone(), method.clone()).await {
         Some(x) => x,
         _ => make_request(connection, &url, &method, timeout, user_agent).await,
     }
 }
 
-async fn get_record(connection: &Client, url: &str, method: &str) -> Option<Record> {
+async fn get_record(connection: &Client, url: String, method: String) -> Option<Record> {
     // try to get a record from the DB
-    let query = format!("SELECT * FROM requests WHERE request = '{}' AND method = '{}' AND expires > {} ORDER BY expires DESC LIMIT 1;", url, method, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64);
-    connection.conn(move |conn| conn.query_row(&query, [], |row| Ok(Record {
-        method: row.get(0)?,
-        request: row.get(1)?,
-        response: row.get(2)?,
-        expires: row.get(3)?,
-        cached: Some(true),
-    }))).await.ok()
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let query = "SELECT * FROM requests WHERE request = ?1 AND method = ?2 AND expires > ?3 ORDER BY expires DESC LIMIT 1;";
+    connection
+        .conn(move |conn| {
+            conn.query_row(query, params![url, method, current_time], |row| {
+                Ok(Record {
+                    method: row.get(0)?,
+                    request: row.get(1)?,
+                    response: row.get(2)?,
+                    expires: row.get(3)?,
+                    cached: Some(true),
+                })
+            })
+        })
+        .await
+        .ok()
 }
 
-async fn insert_record(connection: &Client, record: &Record) -> Result<(), Error> {
+async fn insert_record(connection: &Client, record: Record) -> Result<usize, Error> {
     // remove other records for this url/method
-    let query = format!(
-        "DELETE FROM requests WHERE request = '{}' AND method = '{}';",
-        record.request, record.method
-    );
-    let _ = connection.conn(move |conn| conn.execute_batch(&query)).await;
+    let method = record.method.clone();
+    let request = record.request.clone();
+    let query = "DELETE FROM requests WHERE request = ?1 AND method = ?2;";
+    let _ = connection
+        .conn(move |conn| conn.execute(&query, params![request, method]))
+        .await;
     // then insert the new record
-    let query = format!(
-        "INSERT INTO requests VALUES ('{}', '{}', '{}', {});",
-        record.request, record.method, record.response, record.expires
-    );
-    connection.conn(move |conn| conn.execute_batch(&query)).await
+    let query = "INSERT INTO requests VALUES (?1, ?2, ?3, ?4);";
+    connection
+        .conn(move |conn| {
+            conn.execute(
+                query,
+                params![
+                    record.request,
+                    record.method,
+                    record.response,
+                    record.expires
+                ],
+            )
+        })
+        .await
 }
 
 async fn make_request(
@@ -104,7 +121,7 @@ async fn make_request(
         cached: Some(false),
     };
     // add to the cache
-    insert_record(connection, &record).await.unwrap();
+    insert_record(connection, record.clone()).await.unwrap();
 
     record
 }
@@ -133,7 +150,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_request() {
-        let clean = TestCleanup { path: "test_1".to_string() };
+        let clean = TestCleanup {
+            path: "test_1".to_string(),
+        };
         let db_client = create_connection(clean.path.clone()).await;
         let resp = request(
             &db_client,
@@ -142,10 +161,14 @@ mod tests {
             10000,
             Some(false),
             None,
-        ).await;
+        )
+        .await;
         assert!(resp.cached == Some(false));
         let query = "SELECT COUNT(*) FROM requests";
-        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
         assert!(res == Ok(1));
         let resp = request(
             &db_client,
@@ -154,10 +177,14 @@ mod tests {
             10000,
             None,
             None,
-        ).await;
+        )
+        .await;
         assert!(resp.cached == Some(true));
         let query = "SELECT COUNT(*) FROM requests";
-        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
         assert!(res == Ok(1));
         let resp = request(
             &db_client,
@@ -166,13 +193,16 @@ mod tests {
             10000,
             Some(true),
             Some("dummy".to_string()),
-        ).await;
+        )
+        .await;
         assert!(resp.cached == Some(false));
     }
 
     #[tokio::test]
     async fn test_cache_request_timeout() {
-        let clean = TestCleanup { path: "test_4".to_string() };
+        let clean = TestCleanup {
+            path: "test_4".to_string(),
+        };
         let db_client = create_connection(clean.path.clone()).await;
         let resp = request(
             &db_client,
@@ -184,7 +214,10 @@ mod tests {
         );
         assert!(resp.await.cached == Some(false));
         let query = "SELECT COUNT(*) FROM requests";
-        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
         assert!(res == Ok(1));
         let resp = request(
             &db_client,
@@ -196,7 +229,10 @@ mod tests {
         );
         assert!(resp.await.cached == Some(true));
         let query = "SELECT COUNT(*) FROM requests";
-        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
         assert!(res == Ok(1));
         sleep(Duration::from_secs(1));
         let resp = request(
@@ -209,7 +245,10 @@ mod tests {
         );
         assert!(resp.await.cached == Some(false));
         let query = "SELECT COUNT(*) FROM requests";
-        let res = db_client.conn(move |conn| conn.query_row(&query, [], |row| { Ok(row.get(0))})).await.unwrap();
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
         assert!(res == Ok(1));
     }
 }
