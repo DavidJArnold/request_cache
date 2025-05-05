@@ -1,3 +1,6 @@
+//! `request_cache` is a small wrapper around the `reqwest` crate to provide asynchronous cached
+//! HTTP responses.
+
 use async_sqlite::{rusqlite::params, Client, ClientBuilder, Error};
 use reqwest::header::{HeaderMap, USER_AGENT};
 
@@ -10,13 +13,28 @@ pub struct Record {
     pub cached: Option<bool>,
 }
 
+/// Get response from a request, using cache if available
+pub async fn cached_request(
+    url: String,
+    method: String,
+    timeout: i64,
+    force_refresh: Option<bool>,
+    user_agent: Option<String>,
+    db_path: Option<String>,
+) -> Record {
+    let connection = create_connection(db_path.unwrap_or(String::from("request_cache_db"))).await;
+
+    request(&connection, url, method, timeout, force_refresh, user_agent).await
+}
+
+/// Return a connection for the database located at /path
 pub async fn create_connection(path: String) -> Client {
-    // Return a connection for the database located at /path
     let client = ClientBuilder::new().path(path).open().await.unwrap();
     let _ = client.conn(move |conn| conn.execute_batch("CREATE TABLE IF NOT EXISTS requests (request TEXT, method TEXT, response TEXT, expires INTEGER);")).await;
     client
 }
 
+/// Cached request using an explicit connection
 pub async fn request(
     connection: &Client,
     url: String,
@@ -64,7 +82,7 @@ async fn insert_record(connection: &Client, record: Record) -> Result<usize, Err
     let request = record.request.clone();
     let query = "DELETE FROM requests WHERE request = ?1 AND method = ?2;";
     let _ = connection
-        .conn(move |conn| conn.execute(&query, params![request, method]))
+        .conn(move |conn| conn.execute(query, params![request, method]))
         .await;
     // then insert the new record
     let query = "INSERT INTO requests VALUES (?1, ?2, ?3, ?4);";
@@ -149,7 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cache_request() {
+    async fn test_connection_and_request() {
         let clean = TestCleanup {
             path: "test_1".to_string(),
         };
@@ -199,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cache_request_timeout() {
+    async fn test_connection_and_request_timeout() {
         let clean = TestCleanup {
             path: "test_4".to_string(),
         };
@@ -242,6 +260,110 @@ mod tests {
             5,
             Some(false),
             None,
+        );
+        assert!(resp.await.cached == Some(false));
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
+        assert!(res == Ok(1));
+    }
+
+    #[tokio::test]
+    async fn test_cached_request() {
+        let clean = TestCleanup {
+            path: "test_5".to_string(),
+        };
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            10000,
+            Some(false),
+            None,
+            Some(clean.path.clone()),
+        )
+        .await;
+        assert!(resp.cached == Some(false));
+        let query = "SELECT COUNT(*) FROM requests";
+        let db_client = create_connection(clean.path.clone()).await;
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
+        assert!(res == Ok(1));
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            10000,
+            None,
+            None,
+            Some(clean.path.clone()),
+        )
+        .await;
+        assert!(resp.cached == Some(true));
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
+        assert!(res == Ok(1));
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            10000,
+            Some(true),
+            Some("dummy".to_string()),
+            Some(clean.path.clone()),
+        )
+        .await;
+        assert!(resp.cached == Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_cached_request_timeout() {
+        let clean = TestCleanup {
+            path: "test_6".to_string(),
+        };
+        let db_client = create_connection(clean.path.clone()).await;
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            1,
+            Some(false),
+            Some("dummy".to_string()),
+            Some(clean.path.clone()),
+        );
+        assert!(resp.await.cached == Some(false));
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
+        assert!(res == Ok(1));
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            1,
+            Some(false),
+            None,
+            Some(clean.path.clone()),
+        );
+        assert!(resp.await.cached == Some(true));
+        let query = "SELECT COUNT(*) FROM requests";
+        let res = db_client
+            .conn(move |conn| conn.query_row(&query, [], |row| Ok(row.get(0))))
+            .await
+            .unwrap();
+        assert!(res == Ok(1));
+        sleep(Duration::from_secs(1));
+        let resp = cached_request(
+            "http://example.com".to_string(),
+            "GET".to_string(),
+            5,
+            Some(false),
+            None,
+            Some(clean.path.clone()),
         );
         assert!(resp.await.cached == Some(false));
         let query = "SELECT COUNT(*) FROM requests";
