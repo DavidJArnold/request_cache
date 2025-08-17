@@ -1,1 +1,4 @@
 /target
+*.db
+request_cache_db
+test_*
