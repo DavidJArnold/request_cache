@@ -6,10 +6,13 @@ async fn main() -> Result<(), RequestCacheError> {
     println!("=== Basic Request Cache Example ===\n");
 
     // Make a simple GET request with caching
-    println!("Making first request to GitHub API...");
+    let url = "https://www.example.com".to_string();
+    let method = "GET".to_string();
+
+    println!("Making first request...");
     let record1 = cached_request(
-        "https://api.github.com/users/octocat".to_string(),
-        "GET".to_string(),
+        url.clone(),
+        method.clone(),
         300,  // Cache for 5 minutes
         None, // Don't force refresh
         Some("request_cache_example/1.0".to_string()),
@@ -26,8 +29,8 @@ async fn main() -> Result<(), RequestCacheError> {
     // Make the same request again - should come from cache
     println!("\nMaking second request (should be cached)...");
     let record2 = cached_request(
-        "https://api.github.com/users/octocat".to_string(),
-        "GET".to_string(),
+        url.clone(),
+        method.clone(),
         300,
         None,
         Some("request_cache_example/1.0".to_string()),
@@ -42,8 +45,8 @@ async fn main() -> Result<(), RequestCacheError> {
     // Force a fresh request
     println!("\nMaking third request (forced refresh)...");
     let record3 = cached_request(
-        "https://api.github.com/users/octocat".to_string(),
-        "GET".to_string(),
+        url,
+        method,
         300,
         Some(true), // Force refresh
         Some("request_cache_example/1.0".to_string()),

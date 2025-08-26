@@ -1,14 +1,8 @@
 [package]
 name = "request_cache"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "High-performance, async HTTP request caching library with SQLite persistence and comprehensive error handling"
-repository = "https://github.com/yourusername/request_cache"
-license = "MIT"
 readme = "README.md"
-keywords = ["http", "cache", "async", "sqlite", "reqwest"]
-categories = ["web-programming::http-client", "caching", "asynchronous"]
 exclude = [
     "target/*",
     "examples/*/target/*",

@@ -1,15 +1,15 @@
-//! # request_cache
+//! # `request_cache`
 //!
 //! A high-performance, async HTTP request caching library for Rust that provides intelligent
-//! caching with SQLite persistence, comprehensive error handling, and a modern builder API.
+//! caching with `SQLite` persistence, comprehensive error handling, and a modern builder API.
 //!
 //! ## Features
 //!
-//! - 🚀 **High Performance**: Optimized SQLite operations with proper indexing and HTTP client reuse
+//! - 🚀 **High Performance**: Optimized `SQLite` operations with proper indexing and HTTP client reuse
 //! - 🛡️ **Production Ready**: Comprehensive error handling, input validation, and type safety  
 //! - ⚡ **Async First**: Built on `tokio` and `async-sqlite` for non-blocking operations
 //! - 🎯 **Flexible API**: Both traditional function calls and modern builder pattern
-//! - 📦 **SQLite Persistence**: Automatic cache management with configurable expiration
+//! - 📦 **`SQLite` Persistence**: Automatic cache management with configurable expiration
 //!
 //! ## Quick Start
 //!
@@ -91,12 +91,12 @@ pub enum RequestCacheError {
 impl fmt::Display for RequestCacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RequestCacheError::Database(e) => write!(f, "Database error: {}", e),
-            RequestCacheError::Http(e) => write!(f, "HTTP error: {}", e),
-            RequestCacheError::InvalidUrl(e) => write!(f, "Invalid URL: {}", e),
+            RequestCacheError::Database(e) => write!(f, "Database error: {e}"),
+            RequestCacheError::Http(e) => write!(f, "HTTP error: {e}"),
+            RequestCacheError::InvalidUrl(e) => write!(f, "Invalid URL: {e}"),
             RequestCacheError::InvalidTimeout => write!(f, "Timeout must be positive"),
-            RequestCacheError::InvalidMethod(m) => write!(f, "Invalid HTTP method: {}", m),
-            RequestCacheError::InvalidDatabasePath(p) => write!(f, "Invalid database path: {}", p),
+            RequestCacheError::InvalidMethod(m) => write!(f, "Invalid HTTP method: {m}"),
+            RequestCacheError::InvalidDatabasePath(p) => write!(f, "Invalid database path: {p}"),
         }
     }
 }
@@ -230,7 +230,7 @@ pub struct Record {
 /// * `timeout` - Cache expiration time in seconds (must be positive)
 /// * `force_refresh` - If Some(true), bypasses cache and fetches fresh data
 /// * `user_agent` - Optional custom User-Agent header
-/// * `db_path` - Optional custom database file path (defaults to "request_cache_db")
+/// * `db_path` - Optional custom database file path (defaults to "`request_cache_db`")
 ///
 /// # Returns
 ///
@@ -297,19 +297,19 @@ pub async fn cached_request(
     .await
 }
 
-/// Create and initialize a SQLite database connection for caching.
+/// Create and initialize a `SQLite` database connection for caching.
 ///
-/// This function creates a new SQLite database file (if it doesn't exist) and sets up
+/// This function creates a new `SQLite` database file (if it doesn't exist) and sets up
 /// the necessary tables and indexes for optimal cache performance. The database will
 /// be created at the specified path.
 ///
 /// # Arguments
 ///
-/// * `path` - File system path where the SQLite database should be created/opened
+/// * `path` - File system path where the `SQLite` database should be created/opened
 ///
 /// # Returns
 ///
-/// Returns a [`Result`] containing an async SQLite [`Client`] ready for cache operations,
+/// Returns a [`Result`] containing an async `SQLite` [`Client`] ready for cache operations,
 /// or a [`RequestCacheError`] if database initialization fails.
 ///
 /// # Examples
@@ -357,7 +357,7 @@ pub async fn cached_request(
 /// - Table creation fails
 pub async fn create_connection(path: String) -> Result<Client, RequestCacheError> {
     // Validate database path
-    if path.is_empty() || path.contains("\0") {
+    if path.is_empty() || path.contains('\0') {
         return Err(RequestCacheError::InvalidDatabasePath(path));
     }
 
@@ -424,6 +424,8 @@ pub async fn create_connection(path: String) -> Result<Client, RequestCacheError
 /// # Ok(())
 /// # }
 /// ```
+/// # Errors
+/// May return a `RequestCacheError`
 pub async fn request(
     connection: &Client,
     url: Url,
@@ -682,7 +684,8 @@ impl RequestBuilder {
     /// - Method: GET
     /// - Timeout: 300 seconds (5 minutes)
     /// - Force refresh: false
-    /// - Database path: "request_cache_db"
+    /// - Database path: "`request_cache_db`"
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -702,6 +705,7 @@ impl RequestBuilder {
     /// Set the HTTP method using the [`HttpMethod`] enum.
     ///
     /// This is the type-safe way to specify HTTP methods.
+    #[must_use]
     pub fn method(mut self, method: HttpMethod) -> Self {
         self.method = method;
         self
@@ -743,6 +747,7 @@ impl RequestBuilder {
     ///
     /// # Arguments
     /// * `force` - Whether to bypass the cache
+    #[must_use]
     pub fn force_refresh(mut self, force: bool) -> Self {
         self.force_refresh = force;
         self
@@ -752,15 +757,17 @@ impl RequestBuilder {
     ///
     /// # Arguments
     /// * `user_agent` - User-Agent string to include in the request
+    #[must_use]
     pub fn user_agent<U: Into<String>>(mut self, user_agent: U) -> Self {
         self.user_agent = Some(user_agent.into());
         self
     }
 
-    /// Set a custom path for the SQLite database file.
+    /// Set a custom path for the `SQLite` database file.
     ///
     /// # Arguments
     /// * `path` - File system path where the cache database should be stored
+    #[must_use]
     pub fn database_path<P: Into<String>>(mut self, path: P) -> Self {
         self.db_path = Some(path.into());
         self
@@ -866,12 +873,12 @@ mod tests {
             None,
         )
         .await;
-        
+
         // Handle potential network failures gracefully
         match resp {
             Ok(record) => {
                 assert!(record.cached == Some(false));
-                
+
                 // Verify database entry was created
                 let query = "SELECT COUNT(*) FROM requests";
                 let res: i64 = db_client
@@ -881,9 +888,9 @@ mod tests {
                 assert_eq!(res, 1);
 
                 // Second request should be cached
-                let resp2_result = request(&db_client, url.clone(), method.clone(), 10000, None, None)
-                    .await;
-                    
+                let resp2_result =
+                    request(&db_client, url.clone(), method.clone(), 10000, None, None).await;
+
                 let resp2 = match resp2_result {
                     Ok(resp) => resp,
                     Err(_) => {
@@ -903,7 +910,7 @@ mod tests {
                     Some("dummy".to_string()),
                 )
                 .await;
-                
+
                 let resp3 = match resp3_result {
                     Ok(resp) => resp,
                     Err(_) => {
@@ -939,11 +946,11 @@ mod tests {
             Some("test_agent".to_string()),
         )
         .await;
-        
+
         match resp1 {
             Ok(record) => {
                 assert!(record.cached == Some(false));
-                
+
                 // Second request should be cached
                 let resp2 = request(
                     &db_client,
@@ -987,7 +994,7 @@ mod tests {
             Some(clean.path.clone()),
         )
         .await;
-        
+
         match resp {
             Ok(record) => {
                 assert!(record.cached == Some(false));
@@ -1010,7 +1017,7 @@ mod tests {
                     Some(clean.path.clone()),
                 )
                 .await;
-                
+
                 let resp2 = match resp2_result {
                     Ok(resp) => resp,
                     Err(_) => {
@@ -1030,7 +1037,7 @@ mod tests {
                     Some(clean.path.clone()),
                 )
                 .await;
-                
+
                 let resp3 = match resp3_result {
                     Ok(resp) => resp,
                     Err(_) => {
@@ -1062,7 +1069,7 @@ mod tests {
             Some(clean.path.clone()),
         )
         .await;
-        
+
         match resp {
             Ok(record) => {
                 assert!(record.cached == Some(false));
